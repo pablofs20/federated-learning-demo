@@ -97,6 +97,8 @@ class SocketThread(threading.Thread):
             print("COEFS DESPUES")
             print(nn.coefs_)
             print(type(nn.coefs_))
+            print("puto git")
+            print("tus muertos")
             first_train = True
         else:
             current_model_weights = nn.coefs_
