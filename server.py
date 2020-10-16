@@ -5,21 +5,17 @@ import threading
 import numpy as np
 from sklearn.neural_network import MLPClassifier
 
-initial_inputs = np.array([[0, 0], [0, 1], [1,0], [1,1]])
-initial_outputs = np.array([0, 0, 0, 0])
-
-inputs = np.array([[0, 0], [0, 1], [1,0], [1,1]])
+inputs = np.array([[0, 0], [0, 1], [1, 0], [1, 1]])
 expected_output = np.array([0, 1, 1, 0])
 
 nn = MLPClassifier(
     activation='logistic',
-    max_iter=100,
+    max_iter=1000,
     hidden_layer_sizes=(2,),
     solver='lbfgs')
 
-nn.fit(initial_inputs, initial_outputs)
-
 first_train = False
+score = 0
 
 class SocketThread(threading.Thread):
 
@@ -35,6 +31,7 @@ class SocketThread(threading.Thread):
     def recv(self):
         received_data = b''
         while True:
+            time.sleep(0.005)
             try:
                 data = self.connection.recv(self.buffer_size)
                 received_data += data
@@ -46,8 +43,7 @@ class SocketThread(threading.Thread):
                     if (time.time() - self.recv_start_time) > self.recv_timeout:
                         return None, 0  # 0 means the connection is no longer active and it should be closed.
                 elif str(data)[-2] == '.':
-                    print("All data ({data_len} bytes) have been received from {client_info}.".format(
-                        client_info=self.client_info, data_len=len(received_data)))
+                    print(f"(INFO) All data ({len(received_data)} bytes) have been received from client {self.client_info}")
 
                     if len(received_data) > 0:
                         try:
@@ -57,8 +53,7 @@ class SocketThread(threading.Thread):
                             return received_data, 1
 
                         except BaseException as e:
-                            print("Error decoding client {client_info} data: {error}.\n".format(
-                                client_info=self.client_info, error=e))
+                            print(f"(EXCEPTION) Error decoding client {self.client_info} data: {e}\n")
                             return None, 0
                 else:
                     # In case data are received from the client, update the recv_start_time to the current time to
@@ -66,8 +61,7 @@ class SocketThread(threading.Thread):
                     self.recv_start_time = time.time()
 
             except BaseException as e:
-                print("Error receiving data from client {client_info}: {error}.\n".format(client_info=self.client_info,
-                                                                                          error=e))
+                print(f"(EXCEPTION) Error receiving data from client {self.client_info}: {e}\n")
                 return None, 0
 
     @staticmethod
@@ -78,80 +72,69 @@ class SocketThread(threading.Thread):
 
         return proper
 
-
-
-    def model_averaging(self, updated_model):
-        global first_train
-        if not first_train:
+    @staticmethod
+    def model_averaging(updated_model):
+        global first_train, nn
+        if first_train:
             updated_model_weights = updated_model.coefs_
-
-            print(np.sum(updated_model_weights, nn.coefs_))
-
-            print("COEFS ANTES")
-            print(nn.coefs_)
-            print(type(nn.coefs_))
-            print("COEFS DEL UPDATED")
-            print(updated_model_weights)
-            print(type(nn.coefs_))
-            nn.coefs_ = updated_model_weights
-            print("COEFS DESPUES")
-            print(nn.coefs_)
-            print(type(nn.coefs_))
-            print("puto git")
-            print("tus muertos")
-            print("eo")
-            first_train = True
-        else:
             current_model_weights = nn.coefs_
-            updated_model_weights = updated_model.coefs_
-            #new_weights = self.average_coefs(current_model_weights, updated_model_weights)
-            #nn.coefs_ = new_weights
+
+            result = []
+            for layer in range(0, len(updated_model_weights)):
+                updated = updated_model_weights[layer]
+                current = current_model_weights[layer]
+
+                partial_result = np.array((updated + current) / 2)
+                result.append(partial_result)
+
+            nn.coefs_ = result
+        else:
+            nn = updated_model
+            first_train = True
 
     def reply(self, received_data):
-        global nn
+        global nn, score
         if self.proper_format(received_data):
             action = received_data["action"]
-            print("Client {client} required action: {action}".format(client=self.client_info, action=action))
-            print(received_data)
+            print(f"(INFO) Client {self.client_info} required action: {action}")
 
-            response = b''
             if action == "ready":  # send the model to the client for training
                 try:
                     msg = {"action": "train", "data": nn}
                     response = pickle.dumps(msg)
                     self.connection.sendall(response)
-                    print("Model have been sent to client for training")
+                    print(f"(INFO) Model have been sent to client {self.client_info} for training")
                 except BaseException as e:
-                    print("Error decoding client {client_info} data: {error}".format(client_info=self.client_info,
-                                                                                     error=e))
+                    print(f"(EXCEPTION) Error decoding client {self.client_info} data: {e}")
 
             elif action == "update":
                 try:
                     new_model = received_data["data"]
-                    self.model_averaging(new_model)
-                    score = nn.score(inputs, expected_output)
 
-                    if score < 0.8:
-                        msg = {"action": "train", "data": nn}
-                        response = pickle.dumps(msg)
-                        self.connection.sendall(response)
-                        print("Model have been sent to client for training 2")
-                    else:
-                        print("EUREKA ", score)
-                        msg = {"action": "ok", "data": None}
-                        response = pickle.dumps(msg)
-                        self.connection.sendall(response)
+                    with self.lock:
+                        if score != 1.0:
+                            self.model_averaging(new_model)
+                            score = nn.score(inputs, expected_output)
+                            msg = {"action": "train", "data": nn}
+                            response = pickle.dumps(msg)
+                            self.connection.sendall(response)
+                            print(f"(INFO) Model have been sent to client {self.client_info} for training")
+
+                        else:
+                            print("(INFO) The model has been successfully trained")
+                            msg = {"action": "finished", "data": nn}
+                            response = pickle.dumps(msg)
+                            self.connection.sendall(response)
 
                 except BaseException as e:
-                    print("Error decoding client {client_info} data: {error}".format(client_info=self.client_info,
-                                                                                     error=e))
+                    print(f"(EXCEPTION) Error decoding client {self.client_info} data: {e}")
 
     def initialize_recv_timestamp(self):
         self.recv_start_time = time.time()
         time_struct = time.gmtime()
-        date_time = "Waiting to Receive Data Starting from {day}/{month}/{year} {hour}:{minute}:{second} GMT".format(
-            year=time_struct.tm_year, month=time_struct.tm_mon, day=time_struct.tm_mday, hour=time_struct.tm_hour,
-            minute=time_struct.tm_min, second=time_struct.tm_sec)
+        date_time = f"(INFO) Waiting to Receive Data Starting from " \
+                    f"{time_struct.tm_mday}/{time_struct.tm_mon}/{time_struct.tm_year} " \
+                    f"{time_struct.tm_hour}:{time_struct.tm_min}:{time_struct.tm_sec} GMT "
         print(date_time)
 
     def run(self):
@@ -161,9 +144,8 @@ class SocketThread(threading.Thread):
             if status == 0:
                 self.connection.close()
                 print(
-                    "Connection Closed with {client_info} either due to inactivity for {recv_timeout} seconds or due "
-                    "to an error.".format(
-                        client_info=self.client_info, recv_timeout=self.recv_timeout), end="\n\n")
+                    f"(EXCEPTION) Connection Closed with {self.client_info} either due to inactivity for "
+                    f"{self.recv_timeout} seconds or due to an error", end="\n\n")
                 break
 
             self.reply(received_data)
@@ -178,10 +160,9 @@ class Server(threading.Thread):
         self.timeout = timeout
         self.socket = None
 
-    def accept_connections(self):
+    def accept_connections(self, lock):
         connection, client_info = self.socket.accept()
-        print("New connection from {client_info}.".format(client_info=client_info))
-        lock = threading.RLock()  # for concurrent model modifications
+        print(f"(INFO) New connection from {client_info}.")
         socket_thread = SocketThread(connection=connection,
                                      client_info=client_info,
                                      buffer_size=self.buffer_size,
@@ -191,26 +172,28 @@ class Server(threading.Thread):
 
     def run(self):
         self.socket = socket.socket()
-        print("Socket is created")
+        print("(INFO) Socket is created")
 
         self.socket.bind((self.address, self.port))
-        print("Socket is bound to an address & port number")
+        print("(INFO) Socket is bound to an address & port number")
 
         self.socket.listen(1)
-        print("Listening for incoming connection ...")
+        print("(INFO) Listening for incoming connection ...")
+
+        lock = threading.RLock()  # for concurrent model modifications
 
         while True:
             try:
-                self.accept_connections()
+                self.accept_connections(lock)
             except socket.timeout:
                 self.socket.close()
-                print("(Timeout) Socket closed because no connections received in a while")
+                print("(EXCEPTION) Socket closed because no connections received in a while")
                 break
 
 
 ADDRESS = "127.0.0.1"
 PORT = 10003
-BUFFER_SIZE = 1024
+BUFFER_SIZE = 10000
 TIMEOUT = 10
 
 if __name__ == '__main__':

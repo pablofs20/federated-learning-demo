@@ -14,6 +14,8 @@ model = MLPClassifier(
 # en clientes
 model.fit(inputs, expected_output)
 
+print("n outputs es ", model.n_features_in_)
+
 # mezclar en servidor hasta accuracy aceptable
 
 print('score:', model.score(inputs, expected_output)) # outputs 0.5
