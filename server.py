@@ -17,6 +17,7 @@ nn = MLPClassifier(
 first_train = False
 score = 0
 
+
 class SocketThread(threading.Thread):
 
     def __init__(self, connection, client_info, buffer_size, recv_timeout, lock):
@@ -27,6 +28,13 @@ class SocketThread(threading.Thread):
         self.recv_timeout = recv_timeout
         self.recv_start_time = time.time()
         self.lock = lock
+
+    def surpasses_timeout(self):
+        return (time.time() - self.recv_start_time) > self.recv_timeout
+
+    @staticmethod
+    def has_end_mark(data):
+        return str(data)[-2] == '.'
 
     def recv(self):
         received_data = b''
@@ -40,10 +48,11 @@ class SocketThread(threading.Thread):
                     received_data = b''
                     # If still nothing received for a number of seconds specified by the recv_timeout attribute,
                     # return with status 0 to close the connection.
-                    if (time.time() - self.recv_start_time) > self.recv_timeout:
+                    if self.surpasses_timeout:
                         return None, 0  # 0 means the connection is no longer active and it should be closed.
-                elif str(data)[-2] == '.':
-                    print(f"(INFO) All data ({len(received_data)} bytes) have been received from client {self.client_info}")
+                elif self.has_end_mark(data):
+                    print(
+                        f"(INFO) All data ({len(received_data)} bytes) have been received from client {self.client_info}")
 
                     if len(received_data) > 0:
                         try:
@@ -92,6 +101,26 @@ class SocketThread(threading.Thread):
             nn = updated_model
             first_train = True
 
+    def send_for_training(self):
+        global nn
+        msg = {"action": "train", "data": nn}
+        try:
+            response = pickle.dumps(msg)
+            self.connection.sendall(response)
+        except BaseException as e:
+            print(f"(EXCEPTION) Error decoding client {self.client_info} data: {e}")
+
+        print(f"(INFO) Model have been sent to client {self.client_info} for training")
+
+    def send_trained_model(self):
+        global nn
+        msg = {"action": "finished", "data": nn}
+        try:
+            response = pickle.dumps(msg)
+            self.connection.sendall(response)
+        except BaseException as e:
+            print(f"(EXCEPTION) Error decoding client {self.client_info} data: {e}")
+
     def reply(self, received_data):
         global nn, score
         if self.proper_format(received_data):
@@ -99,15 +128,9 @@ class SocketThread(threading.Thread):
             print(f"(INFO) Client {self.client_info} required action: {action}")
 
             if action == "ready":  # send the model to the client for training
-                try:
-                    msg = {"action": "train", "data": nn}
-                    response = pickle.dumps(msg)
-                    self.connection.sendall(response)
-                    print(f"(INFO) Model have been sent to client {self.client_info} for training")
-                except BaseException as e:
-                    print(f"(EXCEPTION) Error decoding client {self.client_info} data: {e}")
+                self.send_for_training()
 
-            elif action == "update":
+            elif action == "update":  # update current model with new changes
                 try:
                     new_model = received_data["data"]
 
@@ -115,16 +138,14 @@ class SocketThread(threading.Thread):
                         if score != 1.0:
                             self.model_averaging(new_model)
                             score = nn.score(inputs, expected_output)
-                            msg = {"action": "train", "data": nn}
-                            response = pickle.dumps(msg)
-                            self.connection.sendall(response)
-                            print(f"(INFO) Model have been sent to client {self.client_info} for training")
+                            if score != 1.0:
+                                self.send_for_training()
+                            else:
+                                self.send_trained_model()
 
                         else:
                             print("(INFO) The model has been successfully trained")
-                            msg = {"action": "finished", "data": nn}
-                            response = pickle.dumps(msg)
-                            self.connection.sendall(response)
+                            self.send_trained_model()
 
                 except BaseException as e:
                     print(f"(EXCEPTION) Error decoding client {self.client_info} data: {e}")
