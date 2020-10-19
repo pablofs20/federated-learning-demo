@@ -4,6 +4,9 @@ import pickle
 import threading
 import numpy as np
 
+def_inputs = np.array([[0, 0], [0, 1], [1, 0], [1, 1]])
+def_output = np.array([0, 1, 1, 0])
+
 
 class Client(threading.Thread):
     def __init__(self, address, port, buffer_size):
@@ -15,8 +18,8 @@ class Client(threading.Thread):
         self.received_data = b''
         self.action = None
         self.model = None
-        self.inputs = np.array([[0, 0], [0, 1], [1, 0], [1, 1]])
-        self.expected_output = np.array([0, 1, 1, 0])
+        self.inputs = np.array([[1, 0], [1, 1]])
+        self.expected_output = np.array([1, 0])
 
     def initialize_connection(self):
         self.socket = socket.socket()
@@ -54,6 +57,21 @@ class Client(threading.Thread):
         self.socket.sendall(msg)
         print("(INFO) Updated model has been sent to server")
 
+    def test_and_print_results(self):
+        score = self.model.score(def_inputs, def_output)
+        predictions = self.model.predict(def_inputs)
+        print('Score:', score)
+        print('Predictions:', predictions)
+        print('Expected:', np.array([0, 1, 1, 0]))
+
+        return score
+
+    def send_confirmation(self):
+        msg = {"action": "confirmation", "data": None}
+        msg = pickle.dumps(msg)
+        self.socket.sendall(msg)
+        print("(INFO) Confirmation has been sent to server")
+
     def clear_buffer(self):
         self.received_data = b''
 
@@ -67,7 +85,6 @@ class Client(threading.Thread):
 
         done = 0
         while not done:
-            time.sleep(0.005)
             self.clear_buffer()
             self.receive_data()
             self.parse_data()
@@ -79,13 +96,20 @@ class Client(threading.Thread):
             elif self.action == "finished":
                 # Nothing to do, receive model, send confirmation to server and close connection
                 print("(INFO) Training process has finished. Received definitive model from server")
+                print("(INFO) Testing the model ...")
+                score = self.test_and_print_results()
+                if score == 1.0:
+                    print("(INFO) Testing OK! ")
+
+                print("(INFO) Closing the connection with the server ...")
                 self.close_connection()
+                print("(INFO) Connection closed")
                 done = 1
 
 
 ADDRESS = "127.0.0.1"
 PORT = 10003
-BUFFER_SIZE = 10000
+BUFFER_SIZE = 200000
 
 if __name__ == '__main__':
     client = Client(address=ADDRESS, port=PORT, buffer_size=BUFFER_SIZE)

@@ -9,10 +9,11 @@ inputs = np.array([[0, 0], [0, 1], [1, 0], [1, 1]])
 expected_output = np.array([0, 1, 1, 0])
 
 nn = MLPClassifier(
-    activation='logistic',
-    max_iter=1000,
-    hidden_layer_sizes=(2,),
-    solver='lbfgs')
+    activation='relu',
+    max_iter=10000,
+    hidden_layer_sizes=(4, 2),
+    solver= 'lbfgs'
+)
 
 first_train = False
 score = 0
@@ -39,7 +40,6 @@ class SocketThread(threading.Thread):
     def recv(self):
         received_data = b''
         while True:
-            time.sleep(0.005)
             try:
                 data = self.connection.recv(self.buffer_size)
                 received_data += data
@@ -87,16 +87,27 @@ class SocketThread(threading.Thread):
         if first_train:
             updated_model_weights = updated_model.coefs_
             current_model_weights = nn.coefs_
+            updated_model_biases = updated_model.intercepts_
+            current_model_biases = nn.intercepts_
 
-            result = []
+            avg_weights = []
             for layer in range(0, len(updated_model_weights)):
                 updated = updated_model_weights[layer]
                 current = current_model_weights[layer]
 
                 partial_result = np.array((updated + current) / 2)
-                result.append(partial_result)
+                avg_weights.append(partial_result)
 
-            nn.coefs_ = result
+            avg_biases = []
+            for layer in range(0, len(updated_model_biases)):
+                updated = updated_model_biases[layer]
+                current = current_model_biases[layer]
+
+                partial_result = np.array((updated + current) / 2)
+                avg_biases.append(partial_result)
+
+            nn.coefs_ = avg_weights
+            nn.intercepts_ = avg_biases
         else:
             nn = updated_model
             first_train = True
@@ -131,24 +142,22 @@ class SocketThread(threading.Thread):
                 self.send_for_training()
 
             elif action == "update":  # update current model with new changes
-                try:
-                    new_model = received_data["data"]
+                new_model = received_data["data"]
 
-                    with self.lock:
+                with self.lock:
+                    if score != 1.0:
+                        self.model_averaging(new_model)
+                        score = nn.score(inputs, expected_output)
+                        predictions = nn.predict(inputs)
                         if score != 1.0:
-                            self.model_averaging(new_model)
-                            score = nn.score(inputs, expected_output)
-                            if score != 1.0:
-                                self.send_for_training()
-                            else:
-                                self.send_trained_model()
-
+                            print("(INFO) Convergence value has not been reached yet!")
+                            self.send_for_training()
                         else:
-                            print("(INFO) The model has been successfully trained")
                             self.send_trained_model()
 
-                except BaseException as e:
-                    print(f"(EXCEPTION) Error decoding client {self.client_info} data: {e}")
+                    else:
+                        print("(INFO) Model has been successfully trained")
+                        self.send_trained_model()
 
     def initialize_recv_timestamp(self):
         self.recv_start_time = time.time()
@@ -165,7 +174,7 @@ class SocketThread(threading.Thread):
             if status == 0:
                 self.connection.close()
                 print(
-                    f"(EXCEPTION) Connection Closed with {self.client_info} either due to inactivity for "
+                    f"(EXCEPTION) Connection closed with {self.client_info} either due to inactivity for "
                     f"{self.recv_timeout} seconds or due to an error", end="\n\n")
                 break
 
@@ -214,7 +223,7 @@ class Server(threading.Thread):
 
 ADDRESS = "127.0.0.1"
 PORT = 10003
-BUFFER_SIZE = 10000
+BUFFER_SIZE = 200000
 TIMEOUT = 10
 
 if __name__ == '__main__':
