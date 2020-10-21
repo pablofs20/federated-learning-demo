@@ -81,30 +81,12 @@ class Client(threading.Thread):
 
     def run(self):
         self.initialize_connection()
-        self.solicit_model()
+        self.receive_data()  # wait for model
 
-        done = 0
-        while not done:
-            self.clear_buffer()
-            self.receive_data()
+        if self.received_data["action"] == "train":
             self.parse_data()
-
-            if self.action == "train":
-                print("(INFO) Model received from server for training")
-                self.train_model()
-                self.send_updated()
-            elif self.action == "finished":
-                # Nothing to do, receive model, send confirmation to server and close connection
-                print("(INFO) Training process has finished. Received definitive model from server")
-                print("(INFO) Testing the model ...")
-                score = self.test_and_print_results()
-                if score == 1.0:
-                    print("(INFO) Testing OK! ")
-
-                print("(INFO) Closing the connection with the server ...")
-                self.close_connection()
-                print("(INFO) Connection closed")
-                done = 1
+            self.train_model()
+            self.send_updated()
 
 
 ADDRESS = "127.0.0.1"

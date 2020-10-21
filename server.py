@@ -2,7 +2,11 @@ import socket
 import pickle
 import time
 import threading
+import random
 import numpy as np
+from queue import Queue
+from threading import Thread
+from collections import OrderedDict
 from sklearn.neural_network import MLPClassifier
 
 inputs = np.array([[0, 0], [0, 1], [1, 0], [1, 1]])
@@ -12,11 +16,10 @@ nn = MLPClassifier(
     activation='relu',
     max_iter=10000,
     hidden_layer_sizes=(4, 2),
-    solver= 'lbfgs'
+    solver='lbfgs'
 )
 
 first_train = False
-score = 0
 
 
 class SocketThread(threading.Thread):
@@ -182,23 +185,105 @@ class SocketThread(threading.Thread):
 
 
 class Server(threading.Thread):
-    def __init__(self, address, port, buffer_size, timeout):
+    def __init__(self, address, port, buffer_size, timeout, n_rounds):
         threading.Thread.__init__(self)
         self.address = address
         self.port = port
         self.buffer_size = buffer_size
         self.timeout = timeout
         self.socket = None
+        self.n_rounds = n_rounds
+        self.connected_clients = {}
+        self.selected_clients = {}
+        self.n_connected_clients = 0
+        self.n_expected_clients = 2
+        self.n_selected_clients = 0
+        self.c_fraction = 1  # select all available clients per round
+        self.convergence_score = 1.0
+
+        # initialization of the first general model with undefined weights and biases
+        self.model = MLPClassifier(activation='relu',
+                                   max_iter=10000,
+                                   hidden_layer_sizes=(4, 2),
+                                   solver='lbfgs')
 
     def accept_connections(self, lock):
         connection, client_info = self.socket.accept()
         print(f"(INFO) New connection from {client_info}.")
-        socket_thread = SocketThread(connection=connection,
-                                     client_info=client_info,
-                                     buffer_size=self.buffer_size,
-                                     recv_timeout=self.timeout,
-                                     lock=lock)
-        socket_thread.start()
+        return connection, client_info
+
+    def send_for_training(self, client_info, connection):
+        clear_msg = {"action": "train", "data": self.model}
+        try:
+            encoded_msg = pickle.dumps(clear_msg)
+            connection.sendall(encoded_msg)
+        except BaseException as e:
+            print(f"(EXCEPTION) Error decoding client {client_info} data: {e}")
+
+        print(f"(INFO) Model have been sent to client {client_info} for training")
+
+    def surpasses_timeout(self, recv_start_time):
+        return (time.time() - recv_start_time) > self.timeout
+
+    @staticmethod
+    def has_end_mark(data):
+        return str(data)[-2] == '.'
+
+    @staticmethod
+    def is_an_update(data):
+        return data["action"] == "update"
+
+    def recv_update(self, tasks_queue, collected_responses):
+        print("inicio hilo")
+        while not tasks_queue.empty():
+            work = tasks_queue.get()
+            index, connection, client_info = work[0], work[1], work[2]
+
+            received_data = b''
+            recv_start_time = time.time()
+            while True:
+                try:
+                    data = connection.recv(self.buffer_size)
+                    received_data += data
+
+                    if not data:  # Nothing received from the client.
+                        received_data = b''
+                        # If still nothing received for a number of seconds specified by the recv_timeout attribute,
+                        # return with status 0 to close the connection.
+                        if self.surpasses_timeout(recv_start_time):
+                            connection.close()
+                            print(
+                                f"(EXCEPTION) Connection closed with {client_info} either due to inactivity for "
+                                f"{self.timeout} seconds or due to an error", end="\n\n")
+                            collected_responses[index] = None
+                            tasks_queue.task_done()
+                            break
+                    elif self.has_end_mark(data):
+                        print(
+                            f"(INFO) All data ({len(received_data)} bytes) have been received from client {client_info}")
+
+                        if len(received_data) > 0:
+                            try:
+                                # Decoding the data (bytes).
+                                received_data = pickle.loads(received_data)
+                                # Returning the decoded data.
+                                collected_responses[index] = received_data
+                                tasks_queue.task_done()
+                                break
+
+                            except BaseException as e:
+                                print(f"(EXCEPTION) Error decoding client {client_info} data: {e}\n")
+                                tasks_queue.task_done()
+                                break
+                    else:
+                        # In case data are received from the client, update the recv_start_time to the current time to
+                        # reset the timeout counter.
+                        recv_start_time = time.time()
+
+                except BaseException as e:
+                    print(f"(EXCEPTION) Error receiving data from client {client_info}: {e}\n")
+                    tasks_queue.task_done()
+                    break
 
     def run(self):
         self.socket = socket.socket()
@@ -212,20 +297,68 @@ class Server(threading.Thread):
 
         lock = threading.RLock()  # for concurrent model modifications
 
-        while True:
+        # First phase: collecting clients
+        while self.n_connected_clients < self.n_expected_clients:
             try:
-                self.accept_connections(lock)
+                connection, client_info = self.accept_connections(lock)
+                self.connected_clients[client_info] = connection
+                self.n_connected_clients += 1
             except socket.timeout:
                 self.socket.close()
                 print("(EXCEPTION) Socket closed because no connections received in a while")
                 break
+
+        # Second phase: run rounds until convergence
+        rounds_completed = 0
+        score = 0.0
+        while (rounds_completed < self.n_rounds) and (score < self.convergence_score):
+            self.n_selected_clients = self.n_connected_clients * self.c_fraction
+
+            # Select C random fraction from all available clients
+            selected = random.sample(list(self.connected_clients.items()), 2)
+            for sel in selected:
+                self.selected_clients[sel[0]] = sel[1]
+
+            # Send current model to all selected clients for update
+            # Create queue for holding non-completed tasks (task = receive response (update) from 1 client)
+            tasks_queue = Queue(maxsize=0)
+            index = 0
+            for client_info, connection in self.selected_clients.items():
+                new_entry = (index, connection, client_info)
+                tasks_queue.put(new_entry)
+                index += 1
+
+            # Create list for managing responses from all clients. Each client's response received is appended to
+            # this list
+            collected_responses = [{} for client in self.selected_clients]  # For collecting responses from each client
+
+            for client_info, connection in self.selected_clients.items():
+                self.send_for_training(client_info, connection)
+                # Create one thread per client's response pending to allow parallel reception of the responses
+                # Each client's thread gets a task from tasks_queue and appends its result to collected_responses
+                client_thread = Thread(target=self.recv_update, args=(tasks_queue, collected_responses))
+                client_thread.setDaemon(True)
+                client_thread.start()
+
+            # Check if all updates have been received from all selected clients (no tasks remaining on the queue)
+            tasks_queue.join()
+
+            # Retrieve each update from each client's response
+            collected_updates = []
+            for response in collected_responses:
+                print("esto es ", response)
+
+            # Average all updated models received from clients
+            print("PAPAAAAA QUE HE LLEGAO HASTA AQUI!!")
+            rounds_completed += 1
 
 
 ADDRESS = "127.0.0.1"
 PORT = 10003
 BUFFER_SIZE = 200000
 TIMEOUT = 10
+N_ROUNDS = 1
 
 if __name__ == '__main__':
-    server = Server(address=ADDRESS, port=PORT, buffer_size=BUFFER_SIZE, timeout=TIMEOUT)
+    server = Server(address=ADDRESS, port=PORT, buffer_size=BUFFER_SIZE, timeout=TIMEOUT, n_rounds=N_ROUNDS)
     server.start()
