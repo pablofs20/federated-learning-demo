@@ -3,6 +3,7 @@ import time
 import pickle
 import threading
 import numpy as np
+from sklearn.metrics import accuracy_score
 
 def_inputs = np.array([[0, 0], [0, 1], [1, 0], [1, 1]])
 def_output = np.array([0, 1, 1, 0])
@@ -63,6 +64,7 @@ class Client(threading.Thread):
         print('Score:', score)
         print('Predictions:', predictions)
         print('Expected:', np.array([0, 1, 1, 0]))
+        print('Accuracy: ', accuracy_score(np.array([0, 1, 1, 0]), predictions))
 
         return score
 
@@ -81,16 +83,31 @@ class Client(threading.Thread):
 
     def run(self):
         self.initialize_connection()
-        self.receive_data()  # wait for model
+        done = False
+        while not done:
+            self.clear_buffer()
+            self.receive_data()  # wait for server to send us the model
 
-        if self.received_data["action"] == "train":
-            self.parse_data()
-            self.train_model()
-            self.send_updated()
+            if self.received_data["action"] == "train":
+                self.parse_data()
+                self.train_model()
+                self.send_updated()
+
+            if self.received_data["action"] == "finished":
+                print("(INFO) Received definitive model from server")
+                self.parse_data()
+                print("(INFO) Testing the model ...")
+                score = self.test_and_print_results()
+                if score == 1.0:
+                    print("(INFO) Testing OK")
+                    self.close_connection()
+                    done = 1
+
+        print("(INFO) Terminating execution ...")
 
 
 ADDRESS = "127.0.0.1"
-PORT = 10003
+PORT = 10000
 BUFFER_SIZE = 200000
 
 if __name__ == '__main__':

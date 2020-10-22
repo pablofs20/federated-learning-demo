@@ -8,191 +8,23 @@ from queue import Queue
 from threading import Thread
 from collections import OrderedDict
 from sklearn.neural_network import MLPClassifier
+from sklearn.metrics import accuracy_score
+
+initial_inputs = np.array([[0, 0], [0, 1]])
+initial_output = np.array([0, 1])
 
 inputs = np.array([[0, 0], [0, 1], [1, 0], [1, 1]])
 expected_output = np.array([0, 1, 1, 0])
 
-nn = MLPClassifier(
-    activation='relu',
-    max_iter=10000,
-    hidden_layer_sizes=(4, 2),
-    solver='lbfgs'
-)
-
-first_train = False
-
-
-class SocketThread(threading.Thread):
-
-    def __init__(self, connection, client_info, buffer_size, recv_timeout, lock):
-        threading.Thread.__init__(self)
-        self.connection = connection
-        self.client_info = client_info
-        self.buffer_size = buffer_size
-        self.recv_timeout = recv_timeout
-        self.recv_start_time = time.time()
-        self.lock = lock
-
-    def surpasses_timeout(self):
-        return (time.time() - self.recv_start_time) > self.recv_timeout
-
-    @staticmethod
-    def has_end_mark(data):
-        return str(data)[-2] == '.'
-
-    def recv(self):
-        received_data = b''
-        while True:
-            try:
-                data = self.connection.recv(self.buffer_size)
-                received_data += data
-
-                if not data:  # Nothing received from the client.
-                    received_data = b''
-                    # If still nothing received for a number of seconds specified by the recv_timeout attribute,
-                    # return with status 0 to close the connection.
-                    if self.surpasses_timeout:
-                        return None, 0  # 0 means the connection is no longer active and it should be closed.
-                elif self.has_end_mark(data):
-                    print(
-                        f"(INFO) All data ({len(received_data)} bytes) have been received from client {self.client_info}")
-
-                    if len(received_data) > 0:
-                        try:
-                            # Decoding the data (bytes).
-                            received_data = pickle.loads(received_data)
-                            # Returning the decoded data.
-                            return received_data, 1
-
-                        except BaseException as e:
-                            print(f"(EXCEPTION) Error decoding client {self.client_info} data: {e}\n")
-                            return None, 0
-                else:
-                    # In case data are received from the client, update the recv_start_time to the current time to
-                    # reset the timeout counter.
-                    self.recv_start_time = time.time()
-
-            except BaseException as e:
-                print(f"(EXCEPTION) Error receiving data from client {self.client_info}: {e}\n")
-                return None, 0
-
-    @staticmethod
-    def proper_format(received_data):
-        proper = False
-        if (type(received_data) is dict) and ("data" in received_data.keys()) and ("action" in received_data.keys()):
-            proper = True
-
-        return proper
-
-    @staticmethod
-    def model_averaging(updated_model):
-        global first_train, nn
-        if first_train:
-            updated_model_weights = updated_model.coefs_
-            current_model_weights = nn.coefs_
-            updated_model_biases = updated_model.intercepts_
-            current_model_biases = nn.intercepts_
-
-            avg_weights = []
-            for layer in range(0, len(updated_model_weights)):
-                updated = updated_model_weights[layer]
-                current = current_model_weights[layer]
-
-                partial_result = np.array((updated + current) / 2)
-                avg_weights.append(partial_result)
-
-            avg_biases = []
-            for layer in range(0, len(updated_model_biases)):
-                updated = updated_model_biases[layer]
-                current = current_model_biases[layer]
-
-                partial_result = np.array((updated + current) / 2)
-                avg_biases.append(partial_result)
-
-            nn.coefs_ = avg_weights
-            nn.intercepts_ = avg_biases
-        else:
-            nn = updated_model
-            first_train = True
-
-    def send_for_training(self):
-        global nn
-        msg = {"action": "train", "data": nn}
-        try:
-            response = pickle.dumps(msg)
-            self.connection.sendall(response)
-        except BaseException as e:
-            print(f"(EXCEPTION) Error decoding client {self.client_info} data: {e}")
-
-        print(f"(INFO) Model have been sent to client {self.client_info} for training")
-
-    def send_trained_model(self):
-        global nn
-        msg = {"action": "finished", "data": nn}
-        try:
-            response = pickle.dumps(msg)
-            self.connection.sendall(response)
-        except BaseException as e:
-            print(f"(EXCEPTION) Error decoding client {self.client_info} data: {e}")
-
-    def reply(self, received_data):
-        global nn, score
-        if self.proper_format(received_data):
-            action = received_data["action"]
-            print(f"(INFO) Client {self.client_info} required action: {action}")
-
-            if action == "ready":  # send the model to the client for training
-                self.send_for_training()
-
-            elif action == "update":  # update current model with new changes
-                new_model = received_data["data"]
-
-                with self.lock:
-                    if score != 1.0:
-                        self.model_averaging(new_model)
-                        score = nn.score(inputs, expected_output)
-                        predictions = nn.predict(inputs)
-                        if score != 1.0:
-                            print("(INFO) Convergence value has not been reached yet!")
-                            self.send_for_training()
-                        else:
-                            self.send_trained_model()
-
-                    else:
-                        print("(INFO) Model has been successfully trained")
-                        self.send_trained_model()
-
-    def initialize_recv_timestamp(self):
-        self.recv_start_time = time.time()
-        time_struct = time.gmtime()
-        date_time = f"(INFO) Waiting to Receive Data Starting from " \
-                    f"{time_struct.tm_mday}/{time_struct.tm_mon}/{time_struct.tm_year} " \
-                    f"{time_struct.tm_hour}:{time_struct.tm_min}:{time_struct.tm_sec} GMT "
-        print(date_time)
-
-    def run(self):
-        while True:
-            self.initialize_recv_timestamp()
-            received_data, status = self.recv()
-            if status == 0:
-                self.connection.close()
-                print(
-                    f"(EXCEPTION) Connection closed with {self.client_info} either due to inactivity for "
-                    f"{self.recv_timeout} seconds or due to an error", end="\n\n")
-                break
-
-            self.reply(received_data)
-
-
 class Server(threading.Thread):
-    def __init__(self, address, port, buffer_size, timeout, n_rounds):
+    def __init__(self, address, port, buffer_size, timeout, rounds_limit):
         threading.Thread.__init__(self)
         self.address = address
         self.port = port
         self.buffer_size = buffer_size
         self.timeout = timeout
         self.socket = None
-        self.n_rounds = n_rounds
+        self.rounds_limit = rounds_limit
         self.connected_clients = {}
         self.selected_clients = {}
         self.n_connected_clients = 0
@@ -201,11 +33,14 @@ class Server(threading.Thread):
         self.c_fraction = 1  # select all available clients per round
         self.convergence_score = 1.0
 
-        # initialization of the first general model with undefined weights and biases
+        # initialization of the first general model
         self.model = MLPClassifier(activation='relu',
-                                   max_iter=10000,
+                                   max_iter=50000,
                                    hidden_layer_sizes=(4, 2),
                                    solver='lbfgs')
+
+        # initial fit for avoiding non defined variable errors
+        self.model.fit(initial_inputs, initial_output)
 
     def accept_connections(self, lock):
         connection, client_info = self.socket.accept()
@@ -222,6 +57,16 @@ class Server(threading.Thread):
 
         print(f"(INFO) Model have been sent to client {client_info} for training")
 
+    def send_trained_model(self, client_info, connection):
+        clear_msg = {"action": "finished", "data": self.model}
+        try:
+            encoded_msg = pickle.dumps(clear_msg)
+            connection.sendall(encoded_msg)
+        except BaseException as e:
+            print(f"(EXCEPTION) Error decoding client {client_info} data: {e}")
+
+        print(f"(INFO) Definitive model have been sent to client {client_info}")
+
     def surpasses_timeout(self, recv_start_time):
         return (time.time() - recv_start_time) > self.timeout
 
@@ -234,7 +79,6 @@ class Server(threading.Thread):
         return data["action"] == "update"
 
     def recv_update(self, tasks_queue, collected_responses):
-        print("inicio hilo")
         while not tasks_queue.empty():
             work = tasks_queue.get()
             index, connection, client_info = work[0], work[1], work[2]
@@ -285,6 +129,34 @@ class Server(threading.Thread):
                     tasks_queue.task_done()
                     break
 
+    def average(self, collection):
+        avg = []
+        count = 0
+        for update in collection:
+            if count == 0:
+                avg = update
+            else:
+                for layer in range(len(update)):
+                    avg[layer] += update[layer]
+            count += 1
+
+        for layer in range(len(avg)):
+            avg[layer] = avg[layer] / 2
+
+        return avg
+
+
+    def average_updates(self, collected_updates):
+        collected_weights, collected_biases = [], []
+        for update in collected_updates:
+            collected_weights.append(update.coefs_)
+            collected_biases.append(update.intercepts_)
+
+        avg_weights = self.average(collected_weights)
+        avg_biases  = self.average(collected_biases)
+
+        return avg_weights, avg_biases
+
     def run(self):
         self.socket = socket.socket()
         print("(INFO) Socket is created")
@@ -311,7 +183,7 @@ class Server(threading.Thread):
         # Second phase: run rounds until convergence
         rounds_completed = 0
         score = 0.0
-        while (rounds_completed < self.n_rounds) and (score < self.convergence_score):
+        while (rounds_completed < self.rounds_limit) and (score < self.convergence_score):
             self.n_selected_clients = self.n_connected_clients * self.c_fraction
 
             # Select C random fraction from all available clients
@@ -342,23 +214,55 @@ class Server(threading.Thread):
 
             # Check if all updates have been received from all selected clients (no tasks remaining on the queue)
             tasks_queue.join()
+            print("(INFO) All data has been received from all selected clients")
 
-            # Retrieve each update from each client's response
+            # Retrieve each update from each client's response and append it to collected_updates
             collected_updates = []
             for response in collected_responses:
-                print("esto es ", response)
+                if response["action"] == "update":
+                    collected_updates.append(response["data"])
 
-            # Average all updated models received from clients
-            print("PAPAAAAA QUE HE LLEGAO HASTA AQUI!!")
+            # Average weights and biases from all updates received from selected clients
+            avg_weights, avg_biases = self.average_updates(collected_updates)
+
+            # Update server's model with averaged parameters
+            self.model.coefs_ = avg_weights
+            self.model.intercepts_ = avg_biases
+
+            print("(INFO) Model has been successfully averaged")
+
+            # Calculate updated model score
+            score = self.model.score(inputs, expected_output)
+
+            # Update rounds counter
             rounds_completed += 1
+
+        if rounds_completed >= self.rounds_limit:
+            print("(INFO) Rounds limit has been reached and the model hasn't converged")
+        if score == 1.0:
+            print(f"(INFO) The model has been succesfully trained in {rounds_completed} rounds")
+            score = self.model.score(inputs, expected_output)
+            predictions = self.model.predict(inputs)
+            print('Score:', score)
+            print('Predictions:', predictions)
+            print('Expected:', np.array([0, 1, 1, 0]))
+            print('Accuracy: ', accuracy_score(np.array([0, 1, 1, 0]), predictions))
+            # Send definitive model to connected clients
+            print("(INFO) Proceeding to send the definitive model to all connected clients")
+            for client_info, connection in self.connected_clients.items():
+                self.send_trained_model(client_info, connection)
+            print("(INFO) Definitive model has been successfully sent to all connected clients")
+            self.socket.close()
+            print("(INFO) Socket has been closed")
+            print("(INFO) Terminating execution ...")
 
 
 ADDRESS = "127.0.0.1"
-PORT = 10003
+PORT = 10000
 BUFFER_SIZE = 200000
 TIMEOUT = 10
-N_ROUNDS = 1
+ROUNDS_LIMIT = 50000
 
 if __name__ == '__main__':
-    server = Server(address=ADDRESS, port=PORT, buffer_size=BUFFER_SIZE, timeout=TIMEOUT, n_rounds=N_ROUNDS)
+    server = Server(address=ADDRESS, port=PORT, buffer_size=BUFFER_SIZE, timeout=TIMEOUT, rounds_limit=ROUNDS_LIMIT)
     server.start()

@@ -83,16 +83,33 @@ class Client(threading.Thread):
 
     def run(self):
         self.initialize_connection()
-        self.receive_data()  # wait for server to send us the model
+        done = False
+        cont = 0
+        while not done:
+            self.clear_buffer()
+            self.receive_data()  # wait for server to send us the model
 
-        if self.received_data["action"] == "train":
-            self.parse_data()
-            self.train_model()
-            self.send_updated()
+            if self.received_data["action"] == "train":
+                self.parse_data()
+                self.train_model()
+                self.send_updated()
+
+            if self.received_data["action"] == "finished":
+                print("(INFO) Received definitive model from server")
+                self.parse_data()
+                print("(INFO) Testing the model ...")
+                score = self.test_and_print_results()
+                if score == 1.0:
+                    print("(INFO) Testing OK")
+                    self.close_connection()
+                    done = 1
+            cont += 1
+
+        print("(INFO) Terminating execution ...")
 
 
 ADDRESS = "127.0.0.1"
-PORT = 10003
+PORT = 10000
 BUFFER_SIZE = 200000
 
 if __name__ == '__main__':
