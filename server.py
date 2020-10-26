@@ -189,9 +189,8 @@ class FedAVGServer(threading.Thread):
 
             print(f"(INFO) Current round is {rounds_completed + 1} ")
 
-            n_selected_clients = len(connected_clients) * self.c_fraction
-
             # Select C random fraction from all available clients
+            n_selected_clients = len(connected_clients) * self.c_fraction
             selected = random.sample(list(connected_clients.items()), n_selected_clients)
             for sel in selected:
                 selected_clients[sel[0]] = sel[1]
