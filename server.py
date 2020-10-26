@@ -127,30 +127,32 @@ class FedAVGServer(threading.Thread):
         tasks_queue.task_done()
 
     @staticmethod
-    def average(collection):
+    def average(collection, total_samples):
         avg = []
         count = 0
-        for update in collection:
+        for update, n_training_samples in collection:
+            update_weight = n_training_samples / total_samples
             if count == 0:
                 avg = update
+                for layer in range(len(avg)):
+                    avg[layer] = avg[layer] * update_weight
             else:
                 for layer in range(len(update)):
-                    avg[layer] += update[layer]
+                    avg[layer] += (update[layer] * update_weight)
             count += 1
-
-        for layer in range(len(avg)):
-            avg[layer] = avg[layer] / 2
 
         return avg
 
     def average_updates(self, collected_updates):
         collected_weights, collected_biases = [], []
-        for update in collected_updates:
-            collected_weights.append(update.coefs_)
-            collected_biases.append(update.intercepts_)
+        total_samples = 0
+        for update, n_training_samples in collected_updates:
+            total_samples += n_training_samples
+            collected_weights.append((update.coefs_, n_training_samples))
+            collected_biases.append((update.intercepts_, n_training_samples))
 
-        avg_weights = self.average(collected_weights)
-        avg_biases = self.average(collected_biases)
+        avg_weights = self.average(collected_weights, total_samples)
+        avg_biases = self.average(collected_biases, total_samples)
 
         return avg_weights, avg_biases
 
@@ -179,9 +181,7 @@ class FedAVGServer(threading.Thread):
         print("(INFO) Collecting clients phase has ended (number of expected clients has been reached)")
 
         # Second phase: run rounds until convergence
-
         print("(INFO) The federated training process has started. Running rounds ...")
-
         rounds_completed = 0
         score = 0.0
         selected_clients = {}
@@ -227,7 +227,7 @@ class FedAVGServer(threading.Thread):
             collected_updates = []
             for response in collected_responses:
                 if response["action"] == "update":
-                    collected_updates.append(response["model"])
+                    collected_updates.append((response["model"], response["n_training_samples"]))
 
             # Average weights and biases from all updates received from selected clients
             avg_weights, avg_biases = self.average_updates(collected_updates)
@@ -246,7 +246,7 @@ class FedAVGServer(threading.Thread):
             rounds_completed += 1
 
         if rounds_completed >= self.rounds_limit:
-            print(f"(INFO) Rounds limit ({self.rounds_limit}) has been reached and the model hasn't converged")
+            print(f"(INFO) Rounds limit ({self.rounds_limit}) has been reached and the model has not converged")
         if score == 1.0:
             print(f"(INFO) The model has been successfully trained in {rounds_completed} rounds")
 

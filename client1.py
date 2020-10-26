@@ -19,8 +19,8 @@ class FedAVGClient(threading.Thread):
         self.received_data = b''
         self.action = None
         self.model = None
-        self.inputs = np.array([[0, 0], [0, 1]])
-        self.expected_output = np.array([0, 1])
+        self.inputs = np.array([[0, 0]])
+        self.expected_output = np.array([0])
 
     def initialize_connection(self):
         self.socket = socket.socket()
@@ -53,7 +53,8 @@ class FedAVGClient(threading.Thread):
         print("(INFO) Model has been trained")
 
     def send_updated(self):
-        msg = {"action": "update", "model": self.model}
+        n_training_samples = len(self.inputs)
+        msg = {"action": "update", "model": self.model, "n_training_samples": n_training_samples}
         msg = pickle.dumps(msg)
         self.socket.sendall(msg)
         print("(INFO) Updated model has been sent to server")
