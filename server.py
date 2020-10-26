@@ -186,7 +186,6 @@ class FedAVGServer(threading.Thread):
         score = 0.0
         selected_clients = {}
         while (rounds_completed < self.rounds_limit) and (score < self.convergence_score):
-
             print(f"(INFO) Current round is {rounds_completed + 1} ")
 
             # Select C random fraction from all available clients
@@ -208,7 +207,7 @@ class FedAVGServer(threading.Thread):
 
             # Create list for collecting responses from all clients. Each client's response received is appended to
             # this list
-            collected_responses = [{} for client in selected_clients]  # For collecting responses from each client
+            collected_responses = [{} for client in selected_clients]
 
             for client_info, connection in selected_clients.items():
                 self.send_for_training(client_info, connection)
