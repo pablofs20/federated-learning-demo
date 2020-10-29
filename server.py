@@ -42,7 +42,7 @@ class FedAVGServer(threading.Thread):
 
     def accept_connections(self):
         connection, client_info = self.socket.accept()
-        print(f"(INFO) New connection from {client_info}.")
+        print(f"(INFO) New connection from {client_info}")
         return connection, client_info
 
     def send_for_training(self, client_info, connection):
@@ -250,15 +250,16 @@ class FedAVGServer(threading.Thread):
 
         score = self.model.score(inputs, expected_output)
         predictions = self.model.predict(inputs)
-        print('(RESULT) Score:', score)
-        print('(RESULT) Predictions:', predictions)
-        print('(RESULT) Expected:', np.array([0, 1, 1, 0]))
-        print('(RESULT) Accuracy: ', accuracy_score(np.array([0, 1, 1, 0]), predictions))
+        print('(RESULTS) Score:', score)
+        print('(RESULTS) Predictions:', predictions)
+        print('(RESULTS) Expected:', np.array([0, 1, 1, 0]))
+        print('(RESULTS) Accuracy: ', accuracy_score(np.array([0, 1, 1, 0]), predictions))
         # Send definitive model to connected clients
         print("(INFO) Proceeding to send the definitive model to all connected clients")
         for client_info, connection in connected_clients.items():
             self.send_definitive_model(client_info, connection)
         print("(INFO) Definitive model has been successfully sent to all connected clients")
+        print("(INFO) The federated training process has ended")
         self.socket.close()
         print("(INFO) Socket has been closed")
         print("(INFO) Terminating execution ...")

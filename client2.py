@@ -62,10 +62,10 @@ class FedAVGClient(threading.Thread):
     def test_and_print_results(self):
         score = self.model.score(def_inputs, def_output)
         predictions = self.model.predict(def_inputs)
-        print('(RESULT) Score:', score)
-        print('(RESULT) Predictions:', predictions)
-        print('(RESULT) Expected:', np.array([0, 1, 1, 0]))
-        print('(RESULT) Accuracy: ', accuracy_score(np.array([0, 1, 1, 0]), predictions))
+        print('(RESULTS) Score:', score)
+        print('(RESULTS) Predictions:', predictions)
+        print('(RESULTS) Expected:', np.array([0, 1, 1, 0]))
+        print('(RESULTS) Accuracy: ', accuracy_score(np.array([0, 1, 1, 0]), predictions))
 
         return score
 
