@@ -138,7 +138,7 @@ class FedAVGServer(threading.Thread):
                     avg[layer] = avg[layer] * update_weight
             else:
                 for layer in range(len(update)):
-                    avg[layer] += (update[layer] * update_weight)
+                    avg[layer] += update[layer] * update_weight
             count += 1
 
         return avg
@@ -155,6 +155,14 @@ class FedAVGServer(threading.Thread):
         avg_biases = self.average(collected_biases, total_samples)
 
         return avg_weights, avg_biases
+
+    def print_results(self):
+        score = self.model.score(inputs, expected_output)
+        predictions = self.model.predict(inputs)
+        print('(RESULTS) Score:', score)
+        print('(RESULTS) Predictions:', predictions)
+        print('(RESULTS) Expected:', np.array([0, 1, 1, 0]))
+        print('(RESULTS) Accuracy: ', accuracy_score(np.array([0, 1, 1, 0]), predictions))
 
     def run(self):
         self.socket = socket.socket()
@@ -248,12 +256,9 @@ class FedAVGServer(threading.Thread):
         if score == 1.0:
             print(f"(INFO) The model has been successfully trained in {rounds_completed} rounds")
 
-        score = self.model.score(inputs, expected_output)
-        predictions = self.model.predict(inputs)
-        print('(RESULTS) Score:', score)
-        print('(RESULTS) Predictions:', predictions)
-        print('(RESULTS) Expected:', np.array([0, 1, 1, 0]))
-        print('(RESULTS) Accuracy: ', accuracy_score(np.array([0, 1, 1, 0]), predictions))
+        # Print definitive model's results
+        self.print_results()
+
         # Send definitive model to connected clients
         print("(INFO) Proceeding to send the definitive model to all connected clients")
         for client_info, connection in connected_clients.items():
