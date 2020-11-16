@@ -1,12 +1,5 @@
-import threading
-
-import numpy as np
-
 
 class DataModel:
-    inputs = np.array()
-
-    def __init__(self):
-
-
-
+    def __init__(self, inputs, expected_output):
+        self.inputs = inputs
+        self.expected_output = expected_output
