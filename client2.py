@@ -1,10 +1,10 @@
 import socket
 import pickle
 import threading
-import DataModel
 import numpy as np
 from pyhocon import ConfigFactory
 from sklearn.metrics import accuracy_score
+from DataModel import DataModel
 
 def_inputs = np.array([[0, 0], [0, 1], [1, 0], [1, 1]])
 def_output = np.array([0, 1, 1, 0])
