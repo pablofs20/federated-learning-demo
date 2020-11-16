@@ -1,6 +1,7 @@
 import socket
 import pickle
 import threading
+import DataModel
 import numpy as np
 from pyhocon import ConfigFactory
 from sklearn.metrics import accuracy_score
@@ -19,8 +20,7 @@ class FedAVGClient(threading.Thread):
         self.received_data = b''
         self.action = None
         self.model = None
-        self.inputs = np.array([[0, 1], [1, 0], [1, 1]])
-        self.expected_output = np.array([1, 1, 0])
+        self.datamodel = DataModel(np.array([[0, 1], [1, 0], [1, 1]]), np.array([1, 1, 0]))
 
     def initialize_connection(self):
         self.socket = socket.socket()
@@ -49,11 +49,14 @@ class FedAVGClient(threading.Thread):
 
     def train_model(self):
         print("(INFO) Training model received from server ...")
-        self.model.fit(self.inputs, self.expected_output)
+        inputs = getattr(self.datamodel, 'inputs')
+        expected_output = getattr(self.datamodel, 'expected_output')
+        self.model.fit(inputs, expected_output)
         print("(INFO) Model has been trained")
 
     def send_updated(self):
-        n_training_samples = len(self.inputs)
+        inputs = getattr(self.datamodel, 'inputs')
+        n_training_samples = len(inputs)
         msg = {"action": "update", "model": self.model, "n_training_samples": n_training_samples}
         msg = pickle.dumps(msg)
         self.socket.sendall(msg)
