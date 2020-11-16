@@ -18,6 +18,8 @@ expected_output = np.array([0, 1, 1, 0])
 
 
 # aaa
+# bbb
+
 class FedAVGServer(threading.Thread):
     def __init__(self, address, port, buffer_size, timeout, rounds_limit, n_expected_clients, c_fraction,
                  convergence_score):
