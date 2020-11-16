@@ -57,7 +57,8 @@ class FedAVGClient(threading.Thread):
     def send_updated(self):
         inputs = self.datamodel.get_inputs()
         n_training_samples = len(inputs)
-        msg = {"action": "update", "model": self.model, "n_training_samples": n_training_samples}
+        msg = {"action": "update", "model": self.model, "n_training_samples": n_training_samples,
+               "data": self.datamodel}
         msg = pickle.dumps(msg)
         self.socket.sendall(msg)
         print("(INFO) Updated model has been sent to server")

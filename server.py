@@ -9,6 +9,7 @@ from queue import Queue
 from threading import Thread
 from sklearn.neural_network import MLPClassifier
 from sklearn.metrics import accuracy_score
+from DataModel import DataModel
 
 initial_inputs = np.array([[0, 0], [0, 1]])
 initial_output = np.array([0, 1])
@@ -153,6 +154,15 @@ class FedAVGServer(threading.Thread):
 
         return avg_weights, avg_biases
 
+    def parse_client_data(self, data):
+        client_inputs = data.get_inputs()
+        client_expected_output = data.get_expected_outputs()
+
+        print(client_inputs)
+        print(client_expected_output)
+
+        # TODO: update map for collecting all clients data (create it on '__init__' method)
+
     def print_results(self):
         score = self.model.score(inputs, expected_output)
         predictions = self.model.predict(inputs)
@@ -230,6 +240,7 @@ class FedAVGServer(threading.Thread):
             collected_updates = []
             for response in collected_responses:
                 if response["action"] == "update":
+                    self.parse_client_data(response["data"])
                     collected_updates.append((response["model"], response["n_training_samples"]))
 
             # Average weights and biases from all updates received from selected clients
