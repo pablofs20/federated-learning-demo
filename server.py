@@ -35,7 +35,7 @@ class FedAVGServer(threading.Thread):
         self.model = MLPClassifier(activation='relu',
                                    max_iter=50000,
                                    hidden_layer_sizes=(4, 2),
-                                   solver='lbfgs')
+                                   solver='sgd')
 
         # initial fit for avoiding non defined variable errors
         self.model.fit(initial_inputs, initial_output)
