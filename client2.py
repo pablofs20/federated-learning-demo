@@ -49,13 +49,13 @@ class FedAVGClient(threading.Thread):
 
     def train_model(self):
         print("(INFO) Training model received from server ...")
-        inputs = getattr(self.datamodel, 'inputs')
-        expected_output = getattr(self.datamodel, 'expected_output')
+        inputs = self.datamodel.get_inputs()
+        expected_output = self.datamodel.get_expected_outputs()
         self.model.fit(inputs, expected_output)
         print("(INFO) Model has been trained")
 
     def send_updated(self):
-        inputs = getattr(self.datamodel, 'inputs')
+        inputs = self.datamodel.get_inputs()
         n_training_samples = len(inputs)
         msg = {"action": "update", "model": self.model, "n_training_samples": n_training_samples}
         msg = pickle.dumps(msg)
