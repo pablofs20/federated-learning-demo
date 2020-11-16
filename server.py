@@ -45,24 +45,20 @@ class FedAVGServer(threading.Thread):
         print(f"(INFO) New connection from {client_info}")
         return connection, client_info
 
-    def send_for_training(self, client_info, connection):
-        clear_msg = {"action": "train", "model": self.model}
+    def send_message(self, action, connection, client_info):
+        clear_msg = {"action": action, "model": self.model}
         try:
             encoded_msg = pickle.dumps(clear_msg)
             connection.sendall(encoded_msg)
         except BaseException as e:
             print(f"(EXCEPTION) Error decoding client {client_info} data: {e}")
 
+    def send_for_training(self, client_info, connection):
+        self.send_message("train", connection, client_info)
         print(f"(INFO) Model has been sent to client {client_info} for training")
 
     def send_definitive_model(self, client_info, connection):
-        clear_msg = {"action": "finished", "model": self.model}
-        try:
-            encoded_msg = pickle.dumps(clear_msg)
-            connection.sendall(encoded_msg)
-        except BaseException as e:
-            print(f"(EXCEPTION) Error decoding client {client_info} data: {e}")
-
+        self.send_message("finished", connection, client_info)
         print(f"(INFO) Definitive model has been sent to client {client_info}")
 
     def surpasses_timeout(self, recv_start_time):
