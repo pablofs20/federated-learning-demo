@@ -9,14 +9,13 @@ from queue import Queue
 from threading import Thread
 from sklearn.neural_network import MLPClassifier
 from sklearn.metrics import accuracy_score
-from DataModel import DataModel
+from datamodel import DataModel
 
 initial_inputs = np.array([[0, 0], [0, 1]])
 initial_output = np.array([0, 1])
 
 inputs = np.array([[0, 0], [0, 1], [1, 0], [1, 1]])
 expected_output = np.array([0, 1, 1, 0])
-
 
 
 class FedAVGServer(threading.Thread):
@@ -32,6 +31,7 @@ class FedAVGServer(threading.Thread):
         self.n_expected_clients = n_expected_clients
         self.c_fraction = c_fraction
         self.convergence_score = convergence_score
+        self.data_map = {}
 
         # initialization of the first general model
         self.model = MLPClassifier(activation='relu',
@@ -48,7 +48,15 @@ class FedAVGServer(threading.Thread):
         return connection, client_info
 
     def send_message(self, action, connection, client_info):
-        clear_msg = {"action": action, "model": self.model}
+        if action == "train_w_data":
+            data_to_send = []
+            for map_client_info in self.data_map.keys():
+                if client_info != map_client_info:
+                    model = self.data_map[map_client_info]
+                    data_to_send.append(model)
+            clear_msg = {"action": action, "model": self.model, "data": data_to_send}
+        else:
+            clear_msg = {"action": action, "model": self.model}
         try:
             encoded_msg = pickle.dumps(clear_msg)
             connection.sendall(encoded_msg)
@@ -56,7 +64,10 @@ class FedAVGServer(threading.Thread):
             print(f"(EXCEPTION) Error decoding client {client_info} data: {e}")
 
     def send_for_training(self, client_info, connection):
-        self.send_message("train", connection, client_info)
+        if len(self.data_map) > 0:
+            self.send_message("train_w_data", connection, client_info)
+        else:
+            self.send_message("train_wo_data", connection, client_info)
         print(f"(INFO) Model has been sent to client {client_info} for training")
 
     def send_definitive_model(self, client_info, connection):
@@ -105,7 +116,7 @@ class FedAVGServer(threading.Thread):
                         # Decoding the data (bytes).
                         received_data = pickle.loads(received_data)
                         # Returning the decoded data.
-                        collected_responses[index] = received_data
+                        collected_responses[index] = (client_info, received_data)
                         done = True
 
                     except BaseException as e:
@@ -154,14 +165,13 @@ class FedAVGServer(threading.Thread):
 
         return avg_weights, avg_biases
 
-    def parse_client_data(self, data):
+    def parse_client_data(self, data, client_info):
         client_inputs = data.get_inputs()
         client_expected_output = data.get_expected_outputs()
 
-        print(client_inputs)
-        print(client_expected_output)
+        model = DataModel(client_inputs, client_expected_output)
 
-        # TODO: update map for collecting all clients data (create it on '__init__' method)
+        self.data_map[client_info] = model
 
     def print_results(self):
         score = self.model.score(inputs, expected_output)
@@ -238,9 +248,9 @@ class FedAVGServer(threading.Thread):
 
             # Retrieve each update from each client's response and append it to collected_updates
             collected_updates = []
-            for response in collected_responses:
+            for client_info, response in collected_responses:
                 if response["action"] == "update":
-                    self.parse_client_data(response["data"])
+                    self.parse_client_data(response["data"], client_info)
                     collected_updates.append((response["model"], response["n_training_samples"]))
 
             # Average weights and biases from all updates received from selected clients

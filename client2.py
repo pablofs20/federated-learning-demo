@@ -4,7 +4,7 @@ import threading
 import numpy as np
 from pyhocon import ConfigFactory
 from sklearn.metrics import accuracy_score
-from DataModel import DataModel
+from datamodel import DataModel
 
 def_inputs = np.array([[0, 0], [0, 1], [1, 0], [1, 1]])
 def_output = np.array([0, 1, 1, 0])
@@ -47,12 +47,40 @@ class FedAVGClient(threading.Thread):
             self.action = self.received_data["action"]
             self.model = self.received_data["model"]
 
-    def train_model(self):
-        print("(INFO) Training model received from server ...")
+            if "data" in self.received_data.keys():
+                self.remote_data = self.received_data["data"]
+
+    def merge_datamodels(self):
+        local_inputs = self.datamodel.get_inputs()
+        local_expected_outputs = self.datamodel.get_expected_outputs()
+
+        resulting_inputs = local_inputs
+        resulting_expected_outputs = local_expected_outputs
+
+        for data in self.remote_data:
+            remote_inputs = data.get_inputs()
+            remote_expected_outputs = data.get_expected_outputs()
+
+            resulting_inputs = np.concatenate((resulting_inputs, remote_inputs))
+            resulting_expected_outputs = np.concatenate((resulting_expected_outputs, remote_expected_outputs))
+
+        new_datamodel = DataModel(resulting_inputs, resulting_expected_outputs)
+        self.datamodel = new_datamodel
+
+    def train(self):
         inputs = self.datamodel.get_inputs()
         expected_output = self.datamodel.get_expected_outputs()
         self.model.fit(inputs, expected_output)
         print("(INFO) Model has been trained")
+
+    def train_model_wo_data(self):
+        print("(INFO) Training model received from server ...")
+        self.train()
+
+    def train_model_w_data(self):
+        print("(INFO) Training model and remote training data received from server...")
+        self.merge_datamodels()
+        self.train()
 
     def send_updated(self):
         inputs = self.datamodel.get_inputs()
@@ -88,8 +116,12 @@ class FedAVGClient(threading.Thread):
             self.receive_data()  # wait for server to send us the model
             self.parse_data()
 
-            if self.received_data["action"] == "train":
-                self.train_model()
+            if self.action == "train_wo_data":
+                self.train_model_wo_data()
+                self.send_updated()
+
+            if self.action == "train_w_data":
+                self.train_model_w_data()
                 self.send_updated()
 
             if self.received_data["action"] == "finished":
