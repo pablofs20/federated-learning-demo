@@ -47,13 +47,18 @@ class FedAVGServer(threading.Thread):
         print(f"(INFO) New connection from {client_info}")
         return connection, client_info
 
+    def collect_data(self, current_client_info):
+        result = []
+        for client_info in self.data_map.keys():
+            if client_info != current_client_info:
+                model = self.data_map[client_info]
+                result.append(model)
+
+        return result
+
     def send_message(self, action, connection, client_info):
         if action == "train_w_data":
-            data_to_send = []
-            for map_client_info in self.data_map.keys():
-                if client_info != map_client_info:
-                    model = self.data_map[map_client_info]
-                    data_to_send.append(model)
+            data_to_send = self.collect_data(client_info)
             clear_msg = {"action": action, "model": self.model, "data": data_to_send}
         else:
             clear_msg = {"action": action, "model": self.model}
