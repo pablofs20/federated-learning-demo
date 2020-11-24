@@ -4,23 +4,19 @@ import time
 import threading
 import random
 import numpy as np
+import pandas as pd
 from pyhocon import ConfigFactory
 from queue import Queue
 from threading import Thread
-from sklearn.neural_network import MLPClassifier
+from sklearn.mixture import GaussianMixture
+from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import accuracy_score
 
-initial_inputs = np.array([[0, 0], [0, 1]])
-initial_output = np.array([0, 1])
 
-inputs = np.array([[0, 0], [0, 1], [1, 0], [1, 1]])
-expected_output = np.array([0, 1, 1, 0])
-
-
-# aa
 class FedAVGServer(threading.Thread):
-    def __init__(self, address, port, buffer_size, timeout, rounds_limit, n_expected_clients, c_fraction,
-                 convergence_score):
+    def __init__(self, address, port, buffer_size, training_file, timeout, rounds_limit, n_expected_clients,
+                 c_fraction, convergence_score):
+
         threading.Thread.__init__(self)
         self.socket = None
         self.address = address
@@ -31,15 +27,74 @@ class FedAVGServer(threading.Thread):
         self.n_expected_clients = n_expected_clients
         self.c_fraction = c_fraction
         self.convergence_score = convergence_score
+        self.k = 3
+        self.training_file = training_file
+        self.training_data = None
 
-        # initialization of the first general model
-        self.model = MLPClassifier(activation='relu',
-                                   max_iter=100000,
-                                   hidden_layer_sizes=(4, 2),
-                                   solver='lbfgs')
+        # Specification of column names present on the training dataset (name for each feature from each conversation
+        # identified by layer 2)
+        self.__all_columns_names = ["Uplink_IP", "Downlink_IP", "Uplink_port", "Downlink_port",
+                                    "Duration", "Packets_up", "Packets_down", "Bytes_up", "Bytes_down",
+                                    "Max_ps_up", "Min_ps_up", "Ave_ps_up",
+                                    "Max_ps_do", "Min_ps_do", "Ave_ps_do",
+                                    "Max_TCP_up", "Min_TCP_up", "Ave_TCP_up",
+                                    "Max_TCP_do", "Min_TCP_do", "Ave_TCP_do",
+                                    "Max_TTL_up", "Min_TTL_up", "Ave_TTL_up",
+                                    "Max_TTL_do", "Min_TTL_do", "Ave_TTL_do",
+                                    "FIN_up", "SYN_up", "RST_up", "PSH_up", "ACK_up", "URG_up",
+                                    "FIN_do", "SYN_do", "RST_do", "PSH_do", "ACK_do", "URG_do",
+                                    "chgcipher_up", "alert_up", "handshake_up", "appdata_up", "heartbeat_up",
+                                    "chgcipher_do", "alert_do", "handshake_do", "appdata_do", "heartbeat_do",
+                                    "Count", "Srv_count", "Same_src_rate", "Diff_src_rate", "Dst_host_count",
+                                    "Dst_host_srv_count", "Dst_host_same_srv_rate", "Dst_host_diff_srv_rate"]
 
-        # initial fit for avoiding non defined variable errors
-        self.model.fit(initial_inputs, initial_output)
+        self.__useful_columns_names = None
+
+        # Initialization of the first general model
+        self.gmm = GaussianMixture(n_components=self.k, covariance_type='diag', random_state=0)
+
+        # Read initial training dataset and set it up for initial training process
+        self.read_and_prepare_dataset()
+
+        # Initial fit for avoiding non defined variable errors on first FL aggregation step
+        self.gmm.fit(self.training_data)
+
+    def read_and_prepare_dataset(self):
+        # Read training data and convert to pandas dataframe
+        self.training_data = pd.read_csv(self.training_file, delimiter=',')
+
+        # Rename dataframe
+        self.training_data.columns = self.__all_columns_names
+        self.training_data[self.__all_columns_names[2:]] = self.training_data[self.__all_columns_names[2:]] \
+            .astype(float)
+
+        # Transform NA values to median
+        self.training_data.fillna(self.training_data.median(), inplace=True)
+
+        # Useless columns to remove
+        useless_columns = ["Min_ps_up", "Min_ps_do", "Max_TCP_up", "Max_TCP_do",
+                           "Min_TCP_do", "Max_TTL_up", "Min_TTL_up", "Ave_TTL_up", "Max_TTL_do",
+                           "Min_TTL_do", "Ave_TTL_do", "RST_up", "URG_up", "RST_do", "ACK_do",
+                           "URG_do", "heartbeat_do"]
+
+        # Collect useful columns (all columns from __columns_names that are not marked as useless)
+        self.__useful_columns_names = [col for col in self.__all_columns_names if col not in useless_columns]
+
+        # Also ignore first 4 values (IP's and ports), as they are no longer useful
+        self.__useful_columns_names = self.__useful_columns_names[4:]
+
+        # Get rid of specified useless columns
+        self.training_data.drop(useless_columns, axis=1, inplace=True)
+
+        # Get rid of values with errors
+        self.training_data = self.training_data[self.training_data["Duration"] >= 0].reset_index(drop=True)
+
+        # Scale each feature value so it's between the range [0..1]
+        scaler = MinMaxScaler()
+        scaler.fit(self.training_data.iloc[:, 4:])
+
+        # Finally, normalize final dataset
+        self.training_data = pd.DataFrame(scaler.transform(self.training_data.iloc[:, 4:]))
 
     def accept_connections(self):
         connection, client_info = self.socket.accept()
@@ -273,13 +328,14 @@ if __name__ == '__main__':
     ADDRESS = conf.get_string('address')
     PORT = conf.get('port')
     BUFFER_SIZE = conf.get('buffer_size')
+    TRAINING_FILE = conf.get('training_file')
     TIMEOUT = conf.get('timeout')
     ROUNDS_LIMIT = conf.get('rounds_limit')
     N_EXPECTED_CLIENTS = conf.get('n_expected_clients')
     C_FRACTION = conf.get('c_fraction')
     CONVERGENCE_SCORE = conf.get('convergence_score')
 
-    server = FedAVGServer(address=ADDRESS, port=PORT, buffer_size=BUFFER_SIZE, timeout=TIMEOUT,
-                          rounds_limit=ROUNDS_LIMIT, n_expected_clients=N_EXPECTED_CLIENTS, c_fraction=C_FRACTION,
-                          convergence_score=CONVERGENCE_SCORE)
+    server = FedAVGServer(address=ADDRESS, port=PORT, buffer_size=BUFFER_SIZE, training_file=TRAINING_FILE,
+                          timeout=TIMEOUT, rounds_limit=ROUNDS_LIMIT, n_expected_clients=N_EXPECTED_CLIENTS,
+                          c_fraction=C_FRACTION, convergence_score=CONVERGENCE_SCORE)
     server.start()
